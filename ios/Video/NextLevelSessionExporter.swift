@@ -13,6 +13,7 @@ public enum NextLevelSessionExporterError: Error, CustomStringConvertible {
     case readingFailure
     case writingFailure
     case cancelled
+    case invalidTimeRange
     
     public var description: String {
         get {
@@ -25,6 +26,8 @@ public enum NextLevelSessionExporterError: Error, CustomStringConvertible {
                 return "Writing failure"
             case .cancelled:
                 return "Cancelled"
+            case .invalidTimeRange:
+                return "Invalid time range"
             }
         }
     }
@@ -150,6 +153,52 @@ open class NextLevelSessionExporter: NSObject {
         self._videoInput = nil
         self._audioInput = nil
     }
+    
+    // MARK: - Trimming Methods
+    
+    /// Set the time range to trim the video (start and end times in seconds)
+    public func setTimeRange(start: Double, end: Double) {
+        let startTime = CMTime(seconds: start, preferredTimescale: 600)
+        let endTime = CMTime(seconds: end, preferredTimescale: 600)
+        self.timeRange = CMTimeRange(start: startTime, end: endTime)
+    }
+    
+    /// Trim from start time (seconds) to end of video
+    public func trimFromStart(_ start: Double) {
+        let startTime = CMTime(seconds: start, preferredTimescale: 600)
+        self.timeRange = CMTimeRange(start: startTime, end: CMTime.positiveInfinity)
+    }
+    
+    /// Trim from beginning to end time (seconds)
+    public func trimToEnd(_ end: Double) {
+        let endTime = CMTime(seconds: end, preferredTimescale: 600)
+        self.timeRange = CMTimeRange(start: CMTime.zero, end: endTime)
+    }
+    
+    /// Validate the time range is within the asset's duration
+    public func validateTimeRange() -> Bool {
+        guard let asset = self.asset else { return false }
+        
+        let assetDuration = asset.duration
+        let timeRange = self.timeRange
+        
+        // If no specific time range is set, use the full duration
+        if timeRange.start == CMTime.zero && timeRange.end == CMTime.positiveInfinity {
+            return true
+        }
+        
+        // Validate the time range is within bounds
+        if timeRange.start < CMTime.zero || timeRange.end > assetDuration {
+            return false
+        }
+        
+        // Validate start is before end
+        if timeRange.start >= timeRange.end {
+            return false
+        }
+        
+        return true
+    }
 }
 
 // MARK: - export
@@ -178,6 +227,15 @@ extension NextLevelSessionExporter {
             print("NextLevelSessionExporter, an asset and output URL are required for encoding")
             DispatchQueue.main.async {
                 self._completionHandler?(.failure(NextLevelSessionExporterError.setupFailure))
+            }
+            return
+        }
+        
+        // Validate time range
+        if !self.validateTimeRange() {
+            print("NextLevelSessionExporter, invalid time range specified")
+            DispatchQueue.main.async {
+                self._completionHandler?(.failure(NextLevelSessionExporterError.invalidTimeRange))
             }
             return
         }
@@ -531,7 +589,7 @@ extension NextLevelSessionExporter {
                 // make the composition
                 
                 let compositionInstruction = AVMutableVideoCompositionInstruction()
-                compositionInstruction.timeRange = CMTimeRange(start: CMTime.zero, duration: asset.duration)
+                compositionInstruction.timeRange = self.timeRange // Use the specified time range for trimming
                 
                 let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
                 layerInstruction.setTransform(transform, at: CMTime.zero)

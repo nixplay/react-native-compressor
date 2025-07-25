@@ -24,6 +24,8 @@ class VideoCompressorClass(private val context: ReactApplicationContext) {
     outputWidth: Int,
     outputHeight: Int,
     bitrate: Int,
+    startTime: Long = 0L, // New parameter for start time in milliseconds
+    endTime: Long = -1L, // New parameter for end time in milliseconds (-1 means end of video)
     listener: CompressionListener,
   ) {
     val uris = mutableListOf<Uri>()
@@ -36,6 +38,8 @@ class VideoCompressorClass(private val context: ReactApplicationContext) {
       outputWidth,
       outputHeight,
       bitrate,
+      startTime,
+      endTime,
       listener,
       destPath
     )
@@ -52,6 +56,8 @@ class VideoCompressorClass(private val context: ReactApplicationContext) {
     outputWidth: Int,
     outputHeight: Int,
     bitrate: Int,
+    startTime: Long = 0L, // New parameter for start time in milliseconds
+    endTime: Long = -1L, // New parameter for end time in milliseconds (-1 means end of video)
     listener: CompressionListener,
     destPath: String
   ) {
@@ -74,6 +80,8 @@ class VideoCompressorClass(private val context: ReactApplicationContext) {
             outputWidth,
             outputHeight,
             bitrate,
+            startTime,
+            endTime,
             listener,
           )
 
@@ -96,6 +104,8 @@ class VideoCompressorClass(private val context: ReactApplicationContext) {
     outputWidth: Int,
     outputHeight: Int,
     bitrate: Int,
+    startTime: Long = 0L, // New parameter for start time in milliseconds
+    endTime: Long = -1L, // New parameter for end time in milliseconds (-1 means end of video)
     listener: CompressionListener,
   ): Result = withContext(Dispatchers.Default) {
     return@withContext compressVideo(
@@ -107,6 +117,8 @@ class VideoCompressorClass(private val context: ReactApplicationContext) {
       outputWidth,
       outputHeight,
       bitrate,
+      startTime,
+      endTime,
       object : CompressionProgressListener {
         override fun onProgressChanged(index: Int, percent: Float) {
           listener.onProgress(index, percent)

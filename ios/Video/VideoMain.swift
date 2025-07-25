@@ -194,7 +194,7 @@ class VideoCompressor {
             height: Int(resultHeight), width: Int(resultWidth)
             );
 
-        exportVideoHelper(url: url, asset: asset, bitRate: videoBitRate, resultWidth: resultWidth, resultHeight: resultHeight,uuid: uuid,progressDivider: progressDivider) { progress in
+        exportVideoHelper(url: url, asset: asset, bitRate: videoBitRate, resultWidth: resultWidth, resultHeight: resultHeight,uuid: uuid,progressDivider: progressDivider,options: options) { progress in
             onProgress(progress)
         } onCompletion: { outputURL in
             onCompletion(outputURL)
@@ -234,7 +234,7 @@ class VideoCompressor {
 
         let videoBitRate = bitRate ?? height*width*1.5
 
-        exportVideoHelper(url: url, asset: asset, bitRate: Int(videoBitRate), resultWidth: width, resultHeight: height,uuid: uuid,progressDivider: progressDivider) { progress in
+        exportVideoHelper(url: url, asset: asset, bitRate: Int(videoBitRate), resultWidth: width, resultHeight: height,uuid: uuid,progressDivider: progressDivider,options: options) { progress in
             onProgress(progress)
         } onCompletion: { outputURL in
             onCompletion(outputURL)
@@ -243,7 +243,7 @@ class VideoCompressor {
         }
       }
 
-    func exportVideoHelper(url: URL,asset: AVAsset, bitRate: Int,resultWidth:Float,resultHeight:Float,uuid:String,progressDivider: Int, onProgress: @escaping (Float) -> Void,  onCompletion: @escaping (URL) -> Void, onFailure: @escaping (Error) -> Void){
+    func exportVideoHelper(url: URL,asset: AVAsset, bitRate: Int,resultWidth:Float,resultHeight:Float,uuid:String,progressDivider: Int,options: [String: Any], onProgress: @escaping (Float) -> Void,  onCompletion: @escaping (URL) -> Void, onFailure: @escaping (Error) -> Void){
         var currentVideoCompression:Int=0
 
         var tmpURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
@@ -255,6 +255,20 @@ class VideoCompressor {
         exporter.outputURL = tmpURL
         exporter.outputFileType = AVFileType.mp4
 
+        // Handle optional trimming
+        do {
+            if let timeRange = try createTimeRange(
+                startTimeMs: options["startTime"] as? Int,
+                endTimeMs: options["endTime"] as? Int,
+                for: asset
+            ) {
+                exporter.timeRange = timeRange
+            }
+        } catch {
+            onFailure(error)
+            return
+        }
+        
         let compressionDict: [String: Any] = [
           AVVideoAverageBitRateKey: bitRate,
           AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
@@ -297,6 +311,34 @@ class VideoCompressor {
               break
           }
         })
+    }
+
+    private func createTimeRange(startTimeMs: Int?, endTimeMs: Int?, for asset: AVAsset) throws -> CMTimeRange? {
+        guard let startTimeMs = startTimeMs, let endTimeMs = endTimeMs else {
+            return nil // No trimming needed
+        }
+        
+        let assetDuration = asset.duration
+        
+        guard let startTime = CMTime.fromMilliseconds(startTimeMs),
+              let endTime = CMTime.fromMilliseconds(endTimeMs) else {
+            return nil // Invalid time format
+        }
+        
+        // Validate start is before end
+        guard startTime < endTime else {
+            throw CompressionError(message: "Start time must be before end time")
+        }
+        
+        // Adjust times to fit within video duration
+        let clampedStart = max(startTime, .zero)
+        let clampedEnd = min(endTime, assetDuration)
+        
+        // Ensure minimum duration of at least one frame
+        let finalStart = clampedStart
+        let finalEnd = max(clampedEnd, CMTimeAdd(clampedStart, CMTime(value: 1, timescale: 30)))
+        
+        return CMTimeRange(start: finalStart, end: min(finalEnd, assetDuration))
     }
 
     func getVideoTrack(asset: AVAsset) -> AVAssetTrack {
@@ -433,5 +475,12 @@ class VideoCompressor {
             }
         }
     }
+}
 
+extension CMTime {
+    static func fromMilliseconds(_ ms: Int?) -> CMTime? {
+        guard let ms = ms else { return nil }
+        let seconds = Double(ms) / 1000.0
+        return CMTime(seconds: seconds, preferredTimescale: 600)
     }
+}
