@@ -9,6 +9,8 @@ type videoCompresssionType = {
   maxSize?: number;
   compressionMethod?: compressionMethod;
   minimumFileSizeForCompress?: number;
+  startTime?: number;
+  endTime?: number;
   getCancellationId?: (cancellationId: string) => void;
   downloadProgress?: (progress: number) => void;
   /***
@@ -78,7 +80,9 @@ const Video: VideoCompressorType = {
         maxSize?: number;
         minimumFileSizeForCompress?: number;
         progressDivider?: number;
-      } = { uuid };
+        startTime?: number;
+        endTime?: number;
+      } = { uuid, startTime: options?.startTime, endTime: options?.endTime };
       if (options?.progressDivider)
         modifiedOptions.progressDivider = options?.progressDivider;
       if (options?.bitrate) modifiedOptions.bitrate = options?.bitrate;
