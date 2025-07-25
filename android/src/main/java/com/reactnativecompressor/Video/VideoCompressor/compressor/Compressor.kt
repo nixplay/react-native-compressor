@@ -54,6 +54,8 @@ object Compressor {
     outputWidth: Int,
     outputHeight: Int,
     outputBitrate: Int,
+    startTime: Long = 0L, // New parameter for start time in milliseconds
+    endTime: Long = -1L, // New parameter for end time in milliseconds (-1 means end of video)
     listener: CompressionProgressListener,
   ): Result = withContext(Dispatchers.Default) {
 
@@ -96,7 +98,21 @@ object Compressor {
     }
 
     var rotation = rotationData.toInt()
-    val duration = durationData.toLong() * 1000
+    val totalDuration = durationData.toLong() * 1000 // Convert to microseconds
+
+    // Validate and adjust trim times
+    val adjustedStartTime = startTime.coerceAtLeast(0L) * 1000 // Convert to microseconds
+    val adjustedEndTime = if (endTime == -1L) totalDuration else endTime.coerceAtMost(totalDuration / 1000) * 1000 // Convert to microseconds
+    
+    if (adjustedStartTime >= adjustedEndTime) {
+        return@withContext Result(
+            index,
+            success = false,
+            failureMessage = "Start time must be before end time"
+        )
+    }
+
+    val duration = adjustedEndTime - adjustedStartTime // Duration of the trimmed segment
 
     // Handle new bitrate value
     val newBitrate: Int = outputBitrate
@@ -116,7 +132,7 @@ object Compressor {
       else -> rotation
     }
 
-    // Start video compression
+    // Start video compression with trim parameters
     return@withContext start(
       index,
       newWidth!!,
@@ -128,11 +144,13 @@ object Compressor {
       extractor,
       listener,
       duration,
-      rotation
+      rotation,
+      adjustedStartTime,
+      adjustedEndTime
     )
   }
 
-  // Function to start video compression
+  // Function to start video compression with trim functionality
   @Suppress("DEPRECATION")
   private fun start(
     id: Int,
@@ -145,7 +163,9 @@ object Compressor {
     extractor: MediaExtractor,
     compressionProgressListener: CompressionProgressListener,
     duration: Long,
-    rotation: Int
+    rotation: Int,
+    startTime: Long = 0L, // Start time in microseconds
+    endTime: Long = -1L // End time in microseconds (-1 means end of video)
   ): Result {
     // Check if newWidth and newHeight are valid
     if (newWidth != 0 && newHeight != 0) {
@@ -167,7 +187,7 @@ object Compressor {
         val videoIndex = findTrack(extractor, isVideo = true)
 
         extractor.selectTrack(videoIndex)
-        extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+        extractor.seekTo(startTime, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
         val inputFormat = extractor.getTrackFormat(videoIndex)
 
         val outputFormat: MediaFormat =
@@ -215,8 +235,23 @@ object Compressor {
                             val index = extractor.sampleTrackIndex
 
                             if (index == videoIndex) {
-                                val inputBufferIndex =
-                                    decoder.dequeueInputBuffer(MEDIACODEC_TIMEOUT_DEFAULT)
+                            val currentSampleTime = extractor.sampleTime
+                            
+                            // Check if we've reached the end time
+                            if (endTime != -1L && currentSampleTime >= endTime) {
+                                val inputBufferIndex = decoder.dequeueInputBuffer(MEDIACODEC_TIMEOUT_DEFAULT)
+                                if (inputBufferIndex >= 0) {
+                                    decoder.queueInputBuffer(
+                                        inputBufferIndex,
+                                        0,
+                                        0,
+                                        0L,
+                                        MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                                    )
+                                    inputDone = true
+                                }
+                            } else {
+                                val inputBufferIndex = decoder.dequeueInputBuffer(MEDIACODEC_TIMEOUT_DEFAULT)
                                 if (inputBufferIndex >= 0) {
                                     val inputBuffer = decoder.getInputBuffer(inputBufferIndex)
                                     val chunkSize = extractor.readSampleData(inputBuffer!!, 0)
@@ -233,23 +268,21 @@ object Compressor {
                                             inputDone = true
                                         }
                                         else -> {
-
                                             decoder.queueInputBuffer(
                                                 inputBufferIndex,
                                                 0,
                                                 chunkSize,
-                                                extractor.sampleTime,
+                                                currentSampleTime - startTime, // Adjust timestamp relative to start
                                                 0
                                             )
                                             extractor.advance()
-
+                                        }
                                         }
                                     }
                                 }
 
                             } else if (index == -1) { //end of file
-                                val inputBufferIndex =
-                                    decoder.dequeueInputBuffer(MEDIACODEC_TIMEOUT_DEFAULT)
+                                val inputBufferIndex = decoder.dequeueInputBuffer(MEDIACODEC_TIMEOUT_DEFAULT)
                                 if (inputBufferIndex >= 0) {
                                     decoder.queueInputBuffer(
                                         inputBufferIndex,
@@ -394,7 +427,9 @@ object Compressor {
           mediaMuxer = mediaMuxer,
           bufferInfo = bufferInfo,
           disableAudio = disableAudio,
-          extractor
+          extractor = extractor,
+          startTime = startTime,
+          endTime = endTime
         )
 
         extractor.release()
@@ -444,7 +479,9 @@ object Compressor {
         mediaMuxer: MP4Builder,
         bufferInfo: MediaCodec.BufferInfo,
         disableAudio: Boolean,
-        extractor: MediaExtractor
+        extractor: MediaExtractor,
+        startTime: Long = 0L, // Start time in microseconds
+        endTime: Long = -1L // End time in microseconds (-1 means end of video)
     ) {
         val audioIndex = findTrack(extractor, isVideo = false)
         if (audioIndex >= 0 && !disableAudio) {
@@ -466,16 +503,25 @@ object Compressor {
                 }
             }
             var inputDone = false
-            extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            extractor.seekTo(startTime, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
 
             while (!inputDone) {
                 val index = extractor.sampleTrackIndex
                 if (index == audioIndex) {
+                    val currentSampleTime = extractor.sampleTime
+                    
+                    // Check if we've reached the end time
+                    if (endTime != -1L && currentSampleTime >= endTime) {
+                        bufferInfo.size = 0
+                        inputDone = true
+                        continue
+                    }
+                    
                     bufferInfo.size = extractor.readSampleData(buffer, 0)
 
                     if (bufferInfo.size >= 0) {
                         bufferInfo.apply {
-                            presentationTimeUs = extractor.sampleTime
+                            presentationTimeUs = currentSampleTime - startTime // Adjust timestamp relative to start
                             offset = 0
                             flags = MediaCodec.BUFFER_FLAG_KEY_FRAME
                         }
