@@ -81,9 +81,16 @@ class Utils {
     static func getRealPath(_ path: String, type: String, resolve: @escaping RCTPromiseResolveBlock, reject: @escaping RCTPromiseRejectBlock) {
         do {
             if type == "video" {
-                VideoCompressor.getAbsoluteVideoPath(path, options: [:]) { absoluteImagePath in
-                    resolve(absoluteImagePath)
-                }
+                VideoCompressor.getAbsoluteVideoPath(
+                    path, 
+                    options: [:],
+                    completionHandler: { absoluteImagePath in
+                        resolve(absoluteImagePath)
+                    },
+                    errorHandler: { error in
+                        reject(error.localizedDescription, error.localizedDescription, error)
+                    }
+                )
             } else {
                 let options = ImageCompressorOptions.fromDictionary([:])
                 ImageCompressor.getAbsoluteImagePath(path, options: options) { absoluteImagePath in
