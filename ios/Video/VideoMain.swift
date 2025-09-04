@@ -102,12 +102,15 @@ class VideoCompressor {
   func compressVideo(url: URL, options: [String: Any], onProgress: @escaping (Float) -> Void,  onCompletion: @escaping (URL) -> Void, onFailure: @escaping (Error) -> Void){
       let uuid:String = options["uuid"] as! String
 
-      VideoCompressor.getAbsoluteVideoPath(url.absoluteString, options: options) { absoluteVideoPath in
+VideoCompressor.getAbsoluteVideoPath(
+    url.absoluteString, 
+    options: options,
+    completionHandler: { absoluteVideoPath in
         var minimumFileSizeForCompress:Double=0.0;
           let videoURL = URL(string: absoluteVideoPath)
         let fileSize=self.getfileSize(forURL: videoURL!);
           if((options["minimumFileSizeForCompress"]) != nil)
-        {0
+        {
               minimumFileSizeForCompress=options["minimumFileSizeForCompress"] as! Double;
         }
         if(fileSize>minimumFileSizeForCompress)
@@ -142,7 +145,11 @@ class VideoCompressor {
         {
             onCompletion(url)
         }
-      }
+    },
+    errorHandler: { error in
+        onFailure(error)
+    }
+)
 }
 
 
@@ -350,7 +357,10 @@ class VideoCompressor {
 
     func getVideoMetaData(_ filePath: String, resolve: @escaping RCTPromiseResolveBlock, reject: @escaping RCTPromiseRejectBlock) {
         do {
-            VideoCompressor.getAbsoluteVideoPath(filePath, options: [:]) { absoluteImagePath in
+        VideoCompressor.getAbsoluteVideoPath(
+            filePath,
+            options: [:],
+            completionHandler: { absoluteImagePath in
                 if absoluteImagePath.hasPrefix("file://") {
 
                     let absoluteImagePath = URL(string: absoluteImagePath)!.path
@@ -398,13 +408,17 @@ class VideoCompressor {
                         }
                     }
                 }
+            },
+            errorHandler: { error in
+                reject(error.localizedDescription, error.localizedDescription, error)
             }
+        )
         } catch {
             reject(error.localizedDescription, error.localizedDescription, nil)
         }
     }
 
-    static func getAbsoluteVideoPath(_ videoPath: String, options: [String: Any], completionHandler: @escaping (String) -> Void) {
+    static func getAbsoluteVideoPath(_ videoPath: String, options: [String: Any], completionHandler: @escaping (String) -> Void, errorHandler: @escaping (Error) -> Void) {
         if videoPath.hasPrefix("http://") || videoPath.hasPrefix("https://") {
             let uuid=options["uuid"] as? String ?? ""
             let progressDivider=options["progressDivider"] as? Int ?? 0
@@ -421,14 +435,13 @@ class VideoCompressor {
         let pressetType = AVAssetExportPresetPassthrough
 
         if assetId.isEmpty {
-            let error = NSError(domain: "RNGalleryManager", code: -91, userInfo: nil)
-            let exception = NSException(name: NSExceptionName(rawValue: "RNGalleryManager"), reason: "Empty asset ID.", userInfo: nil)
-            exception.raise()
+            errorHandler(CompressionError(message: "Empty asset ID"))
             return
         }
 
         let localIds = [assetId]
         guard let videoAsset = PHAsset.fetchAssets(withLocalIdentifiers: localIds, options: nil).firstObject else {
+            errorHandler(CompressionError(message: "Video asset not found"))
             return
         }
 
@@ -444,9 +457,7 @@ class VideoCompressor {
 
         PHImageManager.default().requestExportSession(forVideo: videoAsset, options: videoRequestOptions, exportPreset: pressetType) { exportSession, _ in
             guard let exportSession = exportSession else {
-                let error = NSError(domain: "RNGalleryManager", code: -91, userInfo: nil)
-                let exception = NSException(name: NSExceptionName(rawValue: "RNGalleryManager"), reason: "Export session is nil.", userInfo: nil)
-                exception.raise()
+                errorHandler(CompressionError(message: "Export session is nil"))
                 return
             }
 
@@ -457,20 +468,14 @@ class VideoCompressor {
             exportSession.exportAsynchronously {
                 switch exportSession.status {
                 case .failed:
-                    let error = exportSession.error ?? NSError(domain: "RNGalleryManager", code: -91, userInfo: nil)
-                    let codeWithDomain = "E\(error.localizedDescription)\(error)"
-                    let exception = NSException(name: NSExceptionName(rawValue: codeWithDomain), reason: "Video export failed.", userInfo: nil)
-                    exception.raise()
+                    let error = exportSession.error ?? CompressionError(message: "Video export failed.")
+                    errorHandler(error)
                 case .cancelled:
-                    let error = NSError(domain: "RNGalleryManager", code: -91, userInfo: nil)
-                    let exception = NSException(name: NSExceptionName(rawValue: "RNGalleryManager"), reason: "Video export cancelled.", userInfo: nil)
-                    exception.raise()
+                    errorHandler(CompressionError(message: "Video export cancelled."))
                 case .completed:
                     completionHandler(outputUrl.absoluteString)
                 default:
-                    let error = NSError(domain: "RNGalleryManager", code: -91, userInfo: nil)
-                    let exception = NSException(name: NSExceptionName(rawValue: "RNGalleryManager"), reason: "Unknown status.", userInfo: nil)
-                    exception.raise()
+                    errorHandler(CompressionError(message: "Unknown status."))
                 }
             }
         }
