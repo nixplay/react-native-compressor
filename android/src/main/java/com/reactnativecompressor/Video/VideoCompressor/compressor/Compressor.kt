@@ -2,6 +2,7 @@ package com.reactnativecompressor.Video.VideoCompressor.compressor
 
 import android.content.Context
 import android.media.MediaCodec
+import android.media.MediaCodecList
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
@@ -10,7 +11,6 @@ import android.os.Build
 import android.util.Log
 import com.reactnativecompressor.Video.VideoCompressor.CompressionProgressListener
 import com.reactnativecompressor.Video.VideoCompressor.utils.CompressorUtils.findTrack
-import com.reactnativecompressor.Video.VideoCompressor.utils.CompressorUtils.hasQTI
 import com.reactnativecompressor.Video.VideoCompressor.utils.CompressorUtils.prepareVideoHeight
 import com.reactnativecompressor.Video.VideoCompressor.utils.CompressorUtils.prepareVideoWidth
 import com.reactnativecompressor.Video.VideoCompressor.utils.CompressorUtils.printException
@@ -193,20 +193,10 @@ object Compressor {
         val outputFormat: MediaFormat =
           MediaFormat.createVideoFormat(MIME_TYPE, newWidth, newHeight)
 
-        // Set output format
-        setOutputFileParameters(
-          inputFormat,
-          outputFormat,
-          newBitrate,
-        )
-
         val decoder: MediaCodec
 
-        // Check if QTI hardware acceleration is available
-        val hasQTI = hasQTI()
-
         // Prepare the video encoder
-        val encoder = prepareEncoder(outputFormat, hasQTI)
+        val encoder = prepareEncoder(inputFormat, outputFormat, newBitrate)
 
         val inputSurface: InputSurface
         val outputSurface: OutputSurface
@@ -541,25 +531,47 @@ object Compressor {
     }
 
   // Function to prepare the video encoder
-    private fun prepareEncoder(outputFormat: MediaFormat, hasQTI: Boolean): MediaCodec {
+    private fun prepareEncoder(
+        inputFormat: MediaFormat,
+        outputFormat: MediaFormat,
+        newBitrate: Int? = null // optional bitrate override
+    ): MediaCodec {
+        val mime = outputFormat.getString(MediaFormat.KEY_MIME) ?: "video/avc"
 
-        // This seems to cause an issue with certain phones
-        // val encoderName = MediaCodecList(REGULAR_CODECS).findEncoderForFormat(outputFormat)
-        // val encoder: MediaCodec = MediaCodec.createByCodecName(encoderName)
-        // Log.i("encoderName", encoder.name)
-        // c2.qti.avc.encoder results in a corrupted .mp4 video that does not play in
-        // Mac and iphones
-        val encoder = if (hasQTI) {
-            MediaCodec.createByCodecName("c2.android.avc.encoder")
-        } else {
-            MediaCodec.createEncoderByType(MIME_TYPE)
+        // Priority order for encoders
+        val preferredEncoders = when (mime) {
+            "video/avc" -> listOf(
+                "c2.android.avc.encoder",   // AOSP hardware AVC
+                "OMX.google.h264.encoder"   // Software AVC fallback
+            )
+            "video/hevc" -> listOf(
+                "c2.android.hevc.encoder",  // AOSP hardware HEVC
+                "OMX.google.hevc.encoder"   // Software HEVC fallback
+            )
+            else -> emptyList()
         }
-        encoder.configure(
-            outputFormat, null, null,
-            MediaCodec.CONFIGURE_FLAG_ENCODE
-        )
 
-        return encoder
+        for (name in preferredEncoders) {
+            try {
+                val codec = MediaCodec.createByCodecName(name)
+
+                // Configure output parameters before configure()
+                setOutputFileParameters(inputFormat, outputFormat, codec, newBitrate)
+
+                codec.configure(outputFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                Log.i("EncoderSelect", "Using encoder: $name for $mime")
+                return codec
+            } catch (e: Exception) {
+                Log.w("EncoderSelect", "Failed with $name, trying next. Error: ${e.message}")
+            }
+        }
+
+        // Fallback: let Android pick the default encoder
+        val codec = MediaCodec.createEncoderByType(mime)
+        setOutputFileParameters(inputFormat, outputFormat, codec, newBitrate)
+        codec.configure(outputFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        Log.i("EncoderSelect", "Using system default encoder for $mime")
+        return codec
     }
 
   // Function to prepare the video decoder

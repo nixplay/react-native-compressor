@@ -1,5 +1,6 @@
 package com.reactnativecompressor.Video.VideoCompressor.utils
 
+import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaExtractor
@@ -69,42 +70,103 @@ object CompressorUtils {
   fun setOutputFileParameters(
     inputFormat: MediaFormat,
     outputFormat: MediaFormat,
-    newBitrate: Int,
+    codec: MediaCodec,
+    newBitrate: Int? = null // optional override
   ) {
-    val newFrameRate = getFrameRate(inputFormat)
-    val iFrameInterval = getIFrameIntervalRate(inputFormat)
-    outputFormat.apply {
-      setInteger(
-        MediaFormat.KEY_COLOR_FORMAT,
-        MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
-      )
+    val codecInfo = codec.codecInfo
+    val mime = outputFormat.getString(MediaFormat.KEY_MIME) ?: "video/avc"
+    val caps = codecInfo.getCapabilitiesForType(mime)
+    val videoCaps = caps.videoCapabilities
 
-      setInteger(MediaFormat.KEY_FRAME_RATE, newFrameRate)
-      setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, iFrameInterval)
-      // Bitrate in bits per second
-      setInteger(MediaFormat.KEY_BIT_RATE, newBitrate)
-      setInteger(
-        MediaFormat.KEY_BITRATE_MODE,
-        MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
-      )
-
-      getColorStandard(inputFormat)?.let {
-        setInteger(MediaFormat.KEY_COLOR_STANDARD, it)
-      }
-
-      getColorTransfer(inputFormat)?.let {
-        setInteger(MediaFormat.KEY_COLOR_TRANSFER, it)
-      }
-
-      getColorRange(inputFormat)?.let {
-        setInteger(MediaFormat.KEY_COLOR_RANGE, it)
-      }
-
-      Log.i(
-        "Output file parameters",
-        "videoFormat: $this"
-      )
+    fun safeGetInt(format: MediaFormat, key: String, defaultValue: Int): Int {
+      return if (format.containsKey(key)) format.getInteger(key) else defaultValue
     }
+
+    // Pull from outputFormat, fallback to defaults
+    val rawWidth = safeGetInt(outputFormat, MediaFormat.KEY_WIDTH, 1280)
+    val rawHeight = safeGetInt(outputFormat, MediaFormat.KEY_HEIGHT, 720)
+
+    // Frame rate
+    val inputFps = if (inputFormat.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+      inputFormat.getInteger(MediaFormat.KEY_FRAME_RATE)
+    } else {
+      30
+    }
+    val rawFps = safeGetInt(outputFormat, MediaFormat.KEY_FRAME_RATE, inputFps)
+
+    // --- Bitrate scaling logic ---
+    val inputWidth = safeGetInt(inputFormat, MediaFormat.KEY_WIDTH, rawWidth)
+    val inputHeight = safeGetInt(inputFormat, MediaFormat.KEY_HEIGHT, rawHeight)
+    val inputBitrate = safeGetInt(inputFormat, MediaFormat.KEY_BIT_RATE, 2_000_000)
+
+    // Scale based on pixel ratio
+    val scale = (rawWidth * rawHeight).toDouble() / (inputWidth * inputHeight).toDouble()
+    val adjustedBitrate = (inputBitrate * scale).toInt()
+
+    // Final bitrate: caller override > scaled > outputFormat > default
+    val rawBitrate = newBitrate
+      ?: safeGetInt(outputFormat, MediaFormat.KEY_BIT_RATE, adjustedBitrate)
+
+    // --- Maintain aspect ratio using original video dimensions ---
+    val aspectRatio = inputWidth.toDouble() / inputHeight.toDouble()
+
+    // Clamp target size within codec supported ranges
+    val clampedWidth = rawWidth.coerceIn(videoCaps.supportedWidths.lower, videoCaps.supportedWidths.upper)
+    val clampedHeight = rawHeight.coerceIn(videoCaps.supportedHeights.lower, videoCaps.supportedHeights.upper)
+
+    // Try aligning width first while preserving aspect ratio
+    // Align to codec requirements (e.g., multiple of 2, 8, or 16)
+    var alignedWidth = clampedWidth - (clampedWidth % videoCaps.widthAlignment)
+    var alignedHeight = (alignedWidth / aspectRatio).toInt()
+    alignedHeight -= alignedHeight % videoCaps.heightAlignment
+
+    // Fallback: if height is out of supported range, align height instead
+    if (alignedHeight < videoCaps.supportedHeights.lower || alignedHeight > videoCaps.supportedHeights.upper) {
+      // Align to codec requirements (e.g., multiple of 2, 8, or 16)
+      alignedHeight = clampedHeight - (clampedHeight % videoCaps.heightAlignment)
+      alignedWidth = (alignedHeight * aspectRatio).toInt()
+      alignedWidth -= alignedWidth % videoCaps.widthAlignment
+    }
+
+    val clampedFps = rawFps.coerceIn(
+      videoCaps.supportedFrameRates.lower.toInt(),
+      videoCaps.supportedFrameRates.upper.toInt()
+    )
+    val clampedBitrate = rawBitrate.coerceIn(
+      videoCaps.bitrateRange.lower,
+      videoCaps.bitrateRange.upper
+    )
+
+    // Apply values back to outputFormat
+    outputFormat.setInteger(MediaFormat.KEY_WIDTH, alignedWidth)
+    outputFormat.setInteger(MediaFormat.KEY_HEIGHT, alignedHeight)
+    outputFormat.setInteger(MediaFormat.KEY_FRAME_RATE, clampedFps)
+    outputFormat.setInteger(MediaFormat.KEY_BIT_RATE, clampedBitrate)
+    outputFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, getIFrameIntervalRate(inputFormat))
+
+    // Always required for surface input
+    outputFormat.setInteger(
+      MediaFormat.KEY_COLOR_FORMAT,
+      MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
+    )
+
+    // --- Propagate color info if present ---
+    getColorStandard(inputFormat)?.let {
+      outputFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, it)
+    }
+    getColorTransfer(inputFormat)?.let {
+      outputFormat.setInteger(MediaFormat.KEY_COLOR_TRANSFER, it)
+    }
+    getColorRange(inputFormat)?.let {
+      outputFormat.setInteger(MediaFormat.KEY_COLOR_RANGE, it)
+    }
+
+    Log.i(
+      "EncoderSelect",
+      "Configured format for ${codecInfo.name}: " +
+              "raw=${rawWidth}x${rawHeight}@${rawFps} ${rawBitrate}bps → " +
+              "aligned=${alignedWidth}x${alignedHeight}@${clampedFps} ${clampedBitrate}bps"
+    )
   }
 
   // Get the frame rate from the input format or use a default value
