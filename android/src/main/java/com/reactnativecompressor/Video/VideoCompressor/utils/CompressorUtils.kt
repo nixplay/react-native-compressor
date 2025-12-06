@@ -108,7 +108,7 @@ object CompressorUtils {
       ?: safeGetInt(outputFormat, MediaFormat.KEY_BIT_RATE, adjustedBitrate)
 
     // --- Maintain aspect ratio using original video dimensions ---
-    val aspectRatio = inputWidth.toDouble() / inputHeight.toDouble()
+    val aspectRatio = rawWidth.toDouble() / rawHeight.toDouble()
 
     // Clamp target size within codec supported ranges
     val clampedWidth = rawWidth.coerceIn(videoCaps.supportedWidths.lower, videoCaps.supportedWidths.upper)
