@@ -18,7 +18,8 @@ struct CompressionError: Error {
 class VideoCompressor {
   var backgroundTaskId: UIBackgroundTaskIdentifier = .invalid;
 
-  var compressorExports: [String: NextLevelSessionExporter] = [:]
+    static var compressorExports: [String: NextLevelSessionExporter] = [:]
+    static var compressorExportSessions: [String: AVAssetExportSession] = [:]
 
     let metadatas: [String] = [
         "albumName",
@@ -75,7 +76,8 @@ class VideoCompressor {
   }
 
     func cancelCompression(uuid: String) -> Void {
-        compressorExports[uuid]?.cancelExport()
+        VideoCompressor.compressorExports[uuid]?.cancelExport()
+        VideoCompressor.compressorExportSessions[uuid]?.cancelExport()
     }
 
     func getfileSize(forURL url: Any) -> Double {
@@ -281,7 +283,7 @@ VideoCompressor.getAbsoluteVideoPath(
           AVSampleRateKey: NSNumber(value: Float(44100))
         ]
 
-        compressorExports[uuid] = exporter
+        VideoCompressor.compressorExports[uuid] = exporter
         exporter.export(progressHandler: { (progress) in
             let roundProgress:Int=Int((progress*100).rounded());
             if(progressDivider==0||(roundProgress%progressDivider==0&&roundProgress>currentVideoCompression))
@@ -446,6 +448,9 @@ VideoCompressor.getAbsoluteVideoPath(
                     print("Trimming from \(startTime)s to \(safeEndTime)s")
                 }
             }
+
+            let uuid=options["uuid"] as? String ?? ""
+            VideoCompressor.compressorExportSessions[uuid] = exportSession
 
             exportSession.exportAsynchronously {
                 switch exportSession.status {
