@@ -201,7 +201,7 @@ VideoCompressor.getAbsoluteVideoPath(
             height: Int(resultHeight), width: Int(resultWidth)
             );
 
-        exportVideoHelper(url: url, asset: asset, bitRate: videoBitRate, resultWidth: resultWidth, resultHeight: resultHeight,uuid: uuid,progressDivider: progressDivider,options: options) { progress in
+        exportVideoHelper(url: url, asset: asset, bitRate: videoBitRate, resultWidth: resultWidth, resultHeight: resultHeight,uuid: uuid,progressDivider: progressDivider) { progress in
             onProgress(progress)
         } onCompletion: { outputURL in
             onCompletion(outputURL)
@@ -241,7 +241,7 @@ VideoCompressor.getAbsoluteVideoPath(
 
         let videoBitRate = bitRate ?? height*width*1.5
 
-        exportVideoHelper(url: url, asset: asset, bitRate: Int(videoBitRate), resultWidth: width, resultHeight: height,uuid: uuid,progressDivider: progressDivider,options: options) { progress in
+        exportVideoHelper(url: url, asset: asset, bitRate: Int(videoBitRate), resultWidth: width, resultHeight: height,uuid: uuid,progressDivider: progressDivider) { progress in
             onProgress(progress)
         } onCompletion: { outputURL in
             onCompletion(outputURL)
@@ -250,7 +250,7 @@ VideoCompressor.getAbsoluteVideoPath(
         }
       }
 
-    func exportVideoHelper(url: URL,asset: AVAsset, bitRate: Int,resultWidth:Float,resultHeight:Float,uuid:String,progressDivider: Int,options: [String: Any], onProgress: @escaping (Float) -> Void,  onCompletion: @escaping (URL) -> Void, onFailure: @escaping (Error) -> Void){
+    func exportVideoHelper(url: URL,asset: AVAsset, bitRate: Int,resultWidth:Float,resultHeight:Float,uuid:String,progressDivider: Int, onProgress: @escaping (Float) -> Void,  onCompletion: @escaping (URL) -> Void, onFailure: @escaping (Error) -> Void){
         var currentVideoCompression:Int=0
 
         var tmpURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
@@ -262,20 +262,6 @@ VideoCompressor.getAbsoluteVideoPath(
         exporter.outputURL = tmpURL
         exporter.outputFileType = AVFileType.mp4
 
-        // Handle optional trimming
-        do {
-            if let timeRange = try createTimeRange(
-                startTimeMs: options["startTime"] as? Int,
-                endTimeMs: options["endTime"] as? Int,
-                for: asset
-            ) {
-                exporter.timeRange = timeRange
-            }
-        } catch {
-            onFailure(error)
-            return
-        }
-        
         let compressionDict: [String: Any] = [
           AVVideoAverageBitRateKey: bitRate,
           AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
@@ -318,34 +304,6 @@ VideoCompressor.getAbsoluteVideoPath(
               break
           }
         })
-    }
-
-    private func createTimeRange(startTimeMs: Int?, endTimeMs: Int?, for asset: AVAsset) throws -> CMTimeRange? {
-        guard let startTimeMs = startTimeMs, let endTimeMs = endTimeMs else {
-            return nil // No trimming needed
-        }
-        
-        let assetDuration = asset.duration
-        
-        guard let startTime = CMTime.fromMilliseconds(startTimeMs),
-              let endTime = CMTime.fromMilliseconds(endTimeMs) else {
-            return nil // Invalid time format
-        }
-        
-        // Validate start is before end
-        guard startTime < endTime else {
-            throw CompressionError(message: "Start time must be before end time")
-        }
-        
-        // Adjust times to fit within video duration
-        let clampedStart = max(startTime, .zero)
-        let clampedEnd = min(endTime, assetDuration)
-        
-        // Ensure minimum duration of at least one frame
-        let finalStart = clampedStart
-        let finalEnd = max(clampedEnd, CMTimeAdd(clampedStart, CMTime(value: 1, timescale: 30)))
-        
-        return CMTimeRange(start: finalStart, end: min(finalEnd, assetDuration))
     }
 
     func getVideoTrack(asset: AVAsset) -> AVAssetTrack {
@@ -465,6 +423,30 @@ VideoCompressor.getAbsoluteVideoPath(
             exportSession.outputFileType = outputFileType
             exportSession.outputURL = outputUrl
 
+            if let startMs = options["startTime"] as? Double,
+            let endMs = options["endTime"] as? Double {
+
+                let startTime = startMs / 1000.0
+                let endTime = endMs / 1000.0
+
+                let durationSeconds = videoAsset.duration
+
+                if startTime < 0 || endTime <= startTime {
+                    print("Invalid trim range: startTime must be >= 0 and endTime > startTime")
+                } else if startTime >= durationSeconds {
+                    print("Invalid trim range: startTime (\(startTime)s) exceeds asset duration (\(durationSeconds)s)")
+                } else {
+
+                    let safeEndTime = min(endTime, durationSeconds)
+
+                    let startCMTime = CMTime(seconds: startTime, preferredTimescale: 600)
+                    let endCMTime = CMTime(seconds: safeEndTime, preferredTimescale: 600)
+
+                    exportSession.timeRange = CMTimeRange(start: startCMTime, end: endCMTime)
+                    print("Trimming from \(startTime)s to \(safeEndTime)s")
+                }
+            }
+
             exportSession.exportAsynchronously {
                 switch exportSession.status {
                 case .failed:
@@ -479,13 +461,5 @@ VideoCompressor.getAbsoluteVideoPath(
                 }
             }
         }
-    }
-}
-
-extension CMTime {
-    static func fromMilliseconds(_ ms: Int?) -> CMTime? {
-        guard let ms = ms else { return nil }
-        let seconds = Double(ms) / 1000.0
-        return CMTime(seconds: seconds, preferredTimescale: 600)
     }
 }
