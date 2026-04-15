@@ -86,7 +86,7 @@ class Utils {
                 VideoCompressor.getAbsoluteVideoPath(
                     path, 
                     options: [:],
-                    completionHandler: { absoluteImagePath in
+                    completionHandler: { absoluteImagePath, _ in
                         resolve(absoluteImagePath)
                     },
                     errorHandler: { error in
