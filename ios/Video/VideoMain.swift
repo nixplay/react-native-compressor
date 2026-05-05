@@ -113,14 +113,37 @@ VideoCompressor.fetchAVAsset(
     options: options,
     completionHandler: { asset, audioMix in
         var minimumFileSizeForCompress:Double=0.0;
-        let fileSize = self.getAssetSizeInMB(asset: asset)
+        var fileSize = self.getAssetSizeInMB(asset: asset)
+        
+        let hasTrimmingParams = options["startTime"] != nil || options["endTime"] != nil
+        if hasTrimmingParams {
+            let startMs = options["startTime"] as? Double ?? 0.0
+            let originalDuration = CMTimeGetSeconds(asset.duration)
+            if originalDuration > 0 {
+                let endMs = options["endTime"] as? Double ?? (originalDuration * 1000.0)
+                let trimmedDurationMs = max(0, endMs - startMs)
+                let ratio = trimmedDurationMs / (originalDuration * 1000.0)
+                fileSize = fileSize * ratio
+            }
+        }
         
         if let minSize = options["minimumFileSizeForCompress"] as? Double {
             minimumFileSizeForCompress = minSize
         }
-        if(fileSize>minimumFileSizeForCompress)
+        
+        if(fileSize>minimumFileSizeForCompress || hasTrimmingParams)
         {
-            if(options["compressionMethod"] as! String=="auto")
+            if (fileSize <= minimumFileSizeForCompress) {
+                // Trimming only: keep original dimensions and bitrate to avoid compression
+                self.trimWithoutCompressionHelper(asset: asset, audioMix: audioMix, options:options) { progress in
+                    onProgress(progress)
+                } onCompletion: { outputURL in
+                    onCompletion(outputURL)
+                } onFailure: { error in
+                    onFailure(error)
+                }
+            }
+            else if(options["compressionMethod"] as! String=="auto")
             {
                 self.autoCompressionHelper(asset: asset, audioMix: audioMix, options:options) { progress in
                     onProgress(progress)
@@ -218,6 +241,40 @@ VideoCompressor.fetchAVAsset(
             onFailure(error)
         }
       }
+
+    func trimWithoutCompressionHelper(asset: AVAsset, audioMix: AVAudioMix?, options: [String: Any], onProgress: @escaping (Float) -> Void,  onCompletion: @escaping (URL) -> Void, onFailure: @escaping (Error) -> Void){
+        let uuid:String = options["uuid"] as! String
+        let progressDivider=options["progressDivider"] as? Int ?? 0
+
+        guard asset.tracks.count >= 1 else {
+          onFailure(CompressionError(message: "Invalid video asset, no track found"))
+          return
+        }
+        let track = getVideoTrack(asset: asset);
+
+        let videoSize = track.naturalSize.applying(track.preferredTransform);
+        var width = Float(abs(videoSize.width))
+        var height = Float(abs(videoSize.height))
+        
+        guard width > 0 && height > 0 else {
+            onFailure(CompressionError(message: "Invalid video dimensions (0x0)"))
+            return
+        }
+
+        width = Float(Int(width / 2) * 2)
+        height = Float(Int(height / 2) * 2)
+
+        let originalBitrate = Float(abs(track.estimatedDataRate))
+        let bitrate = originalBitrate > 0 ? originalBitrate : (width * height * 2.0)
+
+        exportVideoHelper(asset: asset, audioMix: audioMix, bitRate: Int(bitrate), resultWidth: width, resultHeight: height, uuid: uuid, progressDivider: progressDivider, options: options) { progress in
+            onProgress(progress)
+        } onCompletion: { outputURL in
+            onCompletion(outputURL)
+        } onFailure: { error in
+            onFailure(error)
+        }
+    }
 
     func manualCompressionHelper(asset: AVAsset, audioMix: AVAudioMix?, options: [String: Any], onProgress: @escaping (Float) -> Void,  onCompletion: @escaping (URL) -> Void, onFailure: @escaping (Error) -> Void){
         let uuid:String = options["uuid"] as! String
