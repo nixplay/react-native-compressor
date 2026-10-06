@@ -116,7 +116,7 @@ class VideoCompressorHelper {
                     }
                 }
                 val videoBitRate = if (options.bitrate > 0) options.bitrate else (height * width * 1.5).toFloat()
-                Utils.compressVideo(srcPath!!, destinationPath, width, height, videoBitRate, options.uuid!!,options.progressDivider!!, options.startTime, options.endTime, promise, reactContext)
+                Utils.compressVideo(srcPath!!, destinationPath, width, height, videoBitRate, options.uuid!!,options.progressDivider!!, options.startTime, options.endTime, promise = promise, reactContext = reactContext!!)
             } catch (ex: Exception) {
                 promise.reject(ex)
             }

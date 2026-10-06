@@ -45,6 +45,16 @@ object Compressor {
   // Flag to check if compression is running
   var isRunning = true
 
+  // Pending mandatory metadata — set before transcoding, injected into MP4 after
+  @Volatile var pendingGpsLatitude: Double? = null
+  @Volatile var pendingGpsLongitude: Double? = null
+  @Volatile var pendingGpsAltitude: Double? = null
+  @Volatile var pendingGpsLatitudeRef: String? = null
+  @Volatile var pendingGpsLongitudeRef: String? = null
+  @Volatile var pendingDeviceMake: String? = null
+  @Volatile var pendingDeviceModel: String? = null
+  @Volatile var pendingCreationDate: String? = null
+
   suspend fun compressVideo(
     index: Int,
     context: Context,
@@ -54,10 +64,29 @@ object Compressor {
     outputWidth: Int,
     outputHeight: Int,
     outputBitrate: Int,
-    startTime: Long = 0L, // New parameter for start time in milliseconds
-    endTime: Long = -1L, // New parameter for end time in milliseconds (-1 means end of video)
+    startTime: Long = 0L,
+    endTime: Long = -1L,
+    // Mandatory metadata — extracted from original asset before transcoding
+    gpsLatitude: Double? = null,
+    gpsLongitude: Double? = null,
+    gpsAltitude: Double? = null,
+    gpsLatitudeRef: String? = null,
+    gpsLongitudeRef: String? = null,
+    deviceMake: String? = null,
+    deviceModel: String? = null,
+    creationDate: String? = null,
     listener: CompressionProgressListener,
   ): Result = withContext(Dispatchers.Default) {
+
+    // Store metadata for injection after transcoding
+    pendingGpsLatitude = gpsLatitude
+    pendingGpsLongitude = gpsLongitude
+    pendingGpsAltitude = gpsAltitude
+    pendingGpsLatitudeRef = gpsLatitudeRef
+    pendingGpsLongitudeRef = gpsLongitudeRef
+    pendingDeviceMake = deviceMake
+    pendingDeviceModel = deviceModel
+    pendingCreationDate = creationDate
 
     // Initialize MediaExtractor and MediaMetadataRetriever
     val extractor = MediaExtractor()
@@ -164,8 +193,8 @@ object Compressor {
     compressionProgressListener: CompressionProgressListener,
     duration: Long,
     rotation: Int,
-    startTime: Long = 0L, // Start time in microseconds
-    endTime: Long = -1L // End time in microseconds (-1 means end of video)
+    startTime: Long = 0L,
+    endTime: Long = -1L
   ): Result {
     // Check if newWidth and newHeight are valid
     if (newWidth != 0 && newHeight != 0) {
@@ -429,6 +458,14 @@ object Compressor {
           printException(e)
         }
 
+        // Inject mandatory metadata (GPS, device info, creation date) into the output MP4
+        // at the binary level by appending udta atoms after the moov box.
+        try {
+          injectMetadataIntoMp4(cacheFile)
+        } catch (e: Exception) {
+          Log.w("Compressor", "Metadata injection failed (non-fatal): ${e.message}")
+        }
+
       } catch (exception: Exception) {
         printException(exception)
       }
@@ -617,4 +654,101 @@ object Compressor {
         inputSurface.release()
         outputSurface.release()
     }
+
+  /**
+   * Injects mandatory metadata (GPS, device info, creation date) into an MP4 file
+   * by appending udta atoms directly to the file's moov box.
+   *
+   * Atoms written:
+   *   ©xyz  — GPS coordinates in ISO 6709 format (e.g. "+37.4456-122.1585/")
+   *   ©day  — Creation date ISO 8601 (e.g. "2026-06-04T08:34:47Z")
+   *   ©mak  — Device manufacturer (e.g. "Xiaomi")
+   *   ©mod  — Device model (e.g. "Redmi Note 10 Pro")
+   *
+   * This uses RandomAccessFile to append atoms after the moov box so that
+   * no existing structure is damaged. All atoms follow the standard
+   * ISO 14496-12 / QuickTime atom layout: [size:4][type:4][locale:4][data:n].
+   */
+  private fun injectMetadataIntoMp4(file: File) {
+    val lat = pendingGpsLatitude ?: return // GPS is the minimum requirement; skip if absent
+    val lon = pendingGpsLongitude ?: return
+
+    // Build the atoms to inject
+    val atoms = mutableListOf<ByteArray>()
+
+    // --- GPS atom: ©xyz ---
+    // Value: ISO 6709 string e.g. "+37.4456-122.1585/" (trailing slash required by spec)
+    val latSign = if (lat >= 0) "+" else "-"
+    val lonSign = if (lon >= 0) "+" else "-"
+    val altStr = pendingGpsAltitude?.let { alt ->
+      val altSign = if (alt >= 0) "+" else "-"
+      "$altSign${"%05.0f".format(Math.abs(alt))}"
+    } ?: ""
+    val gpsStr = "$latSign${"%08.4f".format(Math.abs(lat))}$lonSign${"%09.4f".format(Math.abs(lon))}${altStr}/"
+    atoms.add(buildQuickTimeAtom("\u00a9xyz", gpsStr))
+
+    // --- Creation date atom: ©day ---
+    pendingCreationDate?.takeIf { it.isNotBlank() }?.let {
+      atoms.add(buildQuickTimeAtom("\u00a9day", it))
+    }
+
+    // --- Device make atom: ©mak ---
+    pendingDeviceMake?.takeIf { it.isNotBlank() }?.let {
+      atoms.add(buildQuickTimeAtom("\u00a9mak", it))
+    }
+
+    // --- Device model atom: ©mod ---
+    pendingDeviceModel?.takeIf { it.isNotBlank() }?.let {
+      atoms.add(buildQuickTimeAtom("\u00a9mod", it))
+    }
+
+    if (atoms.isEmpty()) return
+
+    // Build a udta box wrapping all atoms
+    val udtaPayload = atoms.fold(ByteArray(0)) { acc, a -> acc + a }
+    val udtaSize = udtaPayload.size + 8
+    val udtaBox = ByteArray(udtaSize)
+    udtaBox[0] = ((udtaSize shr 24) and 0xFF).toByte()
+    udtaBox[1] = ((udtaSize shr 16) and 0xFF).toByte()
+    udtaBox[2] = ((udtaSize shr 8) and 0xFF).toByte()
+    udtaBox[3] = (udtaSize and 0xFF).toByte()
+    System.arraycopy("udta".toByteArray(Charsets.ISO_8859_1), 0, udtaBox, 4, 4)
+    System.arraycopy(udtaPayload, 0, udtaBox, 8, udtaPayload.size)
+
+    // Append the udta box to the end of the file
+    java.io.RandomAccessFile(file, "rw").use { raf ->
+      raf.seek(raf.length())
+      raf.write(udtaBox)
+    }
+  }
+
+  /**
+   * Builds a single QuickTime metadata atom.
+   * Layout: [4 bytes total size][4 bytes type][4 bytes locale=0x0001][2 bytes data length][data bytes]
+   * The locale header (4 bytes 0x00 0x00 0x01 0x00) marks the atom as carrying a UTF-8 string.
+   */
+  private fun buildQuickTimeAtom(type: String, value: String): ByteArray {
+    val valueBytes = value.toByteArray(Charsets.UTF_8)
+    // Each QuickTime text atom has an inner data section: 2 bytes (length of string) + string bytes
+    val innerSize = 2 + valueBytes.size
+    // Total atom: 4 (size) + 4 (type) + 4 (locale) + innerSize
+    val totalSize = 12 + innerSize
+    val buf = ByteArray(totalSize)
+    // Total size
+    buf[0] = ((totalSize shr 24) and 0xFF).toByte()
+    buf[1] = ((totalSize shr 16) and 0xFF).toByte()
+    buf[2] = ((totalSize shr 8) and 0xFF).toByte()
+    buf[3] = (totalSize and 0xFF).toByte()
+    // 4-byte type code (padded to 4 bytes if needed, e.g. "©xyz")
+    val typeBytes = type.toByteArray(Charsets.ISO_8859_1)
+    for (i in 0 until minOf(4, typeBytes.size)) buf[4 + i] = typeBytes[i]
+    // Locale: 0x00 0x00 0x01 0x00 (English)
+    buf[8]  = 0x00; buf[9]  = 0x00; buf[10] = 0x01; buf[11] = 0x00
+    // Inner: 2-byte big-endian string length
+    buf[12] = ((valueBytes.size shr 8) and 0xFF).toByte()
+    buf[13] = (valueBytes.size and 0xFF).toByte()
+    // Inner: string bytes
+    System.arraycopy(valueBytes, 0, buf, 14, valueBytes.size)
+    return buf
+  }
 }

@@ -29,12 +29,18 @@ object Utils {
     }
 
     @JvmStatic
-    fun compressVideo(srcPath: String, destinationPath: String, resultWidth: Int, resultHeight: Int, videoBitRate: Float, uuid: String,progressDivider:Int, startTime: Long = 0L, endTime: Long = -1L, promise: Promise, reactContext: ReactApplicationContext) {
+    fun compressVideo(srcPath: String, destinationPath: String, resultWidth: Int, resultHeight: Int, videoBitRate: Float, uuid: String, progressDivider: Int, startTime: Long = 0L, endTime: Long = -1L,
+      gpsLatitude: Double? = null, gpsLongitude: Double? = null, gpsAltitude: Double? = null,
+      gpsLatitudeRef: String? = null, gpsLongitudeRef: String? = null,
+      deviceMake: String? = null, deviceModel: String? = null, creationDate: String? = null,
+      promise: Promise, reactContext: ReactApplicationContext) {
       val currentVideoCompression = intArrayOf(0)
       val videoCompressorClass: VideoCompressorClass? = VideoCompressorClass(reactContext);
       compressorExports[uuid] = videoCompressorClass
       videoCompressorClass?.start(
         srcPath, destinationPath, resultWidth, resultHeight, videoBitRate.toInt(), startTime, endTime,
+        gpsLatitude, gpsLongitude, gpsAltitude, gpsLatitudeRef, gpsLongitudeRef,
+        deviceMake, deviceModel, creationDate,
         listener = object : CompressionListener {
           override fun onProgress(index: Int, percent: Float) {
             if (percent <= 100) {

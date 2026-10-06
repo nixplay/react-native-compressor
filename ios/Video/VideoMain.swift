@@ -343,7 +343,16 @@ VideoCompressor.fetchAVAsset(
         exporter.outputURL = tmpURL
         exporter.outputFileType = AVFileType.mp4
         exporter.audioMix = audioMix
-        exporter.metadata = asset.metadata
+
+        // Start with all existing asset metadata (creation date, common tags, etc.)
+        var exportMetadata: [AVMetadataItem] = asset.metadata
+
+        // Inject mandatory metadata extracted BEFORE transcoding (GPS, device info, creation date)
+        // These are passed in via the options dictionary from the JS/RN layer.
+        exportMetadata.append(contentsOf: VideoCompressor.buildMandatoryMetadataItems(options: options))
+
+        exporter.metadata = exportMetadata
+
 
         if let startMs = options["startTime"] as? Double, let endMs = options["endTime"] as? Double {
             let startTime = startMs / 1000.0
@@ -671,4 +680,74 @@ VideoCompressor.fetchAVAsset(
             }
         }
     }
+
+    // MARK: - Mandatory Metadata Injection
+
+    /// Builds AVMetadataItems for GPS, creation date, and device info from the options dictionary.
+    /// These are passed in from the JS layer via the compress() options and injected into the
+    /// NextLevelSessionExporter metadata array so they survive the H.264 re-encode.
+    ///
+    /// Keys read from options:
+    ///   gpsLatitude   (Double)
+    ///   gpsLongitude  (Double)
+    ///   gpsAltitude   (Double, optional)
+    ///   creationDate  (String ISO 8601, optional)
+    ///   deviceMake    (String, optional)
+    ///   deviceModel   (String, optional)
+    static func buildMandatoryMetadataItems(options: [String: Any]) -> [AVMetadataItem] {
+        var items: [AVMetadataItem] = []
+
+        // --- GPS: QuickTime location atom ©xyz (ISO 6709 format) ---
+        if let lat = options["gpsLatitude"] as? Double,
+           let lon = options["gpsLongitude"] as? Double {
+            let latSign = lat >= 0 ? "+" : "-"
+            let lonSign = lon >= 0 ? "+" : "-"
+            var gpsStr = "\(latSign)\(String(format: "%08.4f", abs(lat)))\(lonSign)\(String(format: "%09.4f", abs(lon)))"
+            if let alt = options["gpsAltitude"] as? Double {
+                let altSign = alt >= 0 ? "+" : "-"
+                gpsStr += "\(altSign)\(String(format: "%05.0f", abs(alt)))"
+            }
+            gpsStr += "/"  // ISO 6709 trailing slash required
+
+            let gpsItem = AVMutableMetadataItem()
+            gpsItem.keySpace = AVMetadataKeySpace.quickTimeUserData
+            gpsItem.key = "©xyz" as NSString
+            gpsItem.value = gpsStr as NSString
+            gpsItem.dataType = kCMMetadataBaseDataType_UTF8 as String
+            items.append(gpsItem)
+        }
+
+        // --- Creation date: QuickTime ©day ---
+        if let creationDate = options["creationDate"] as? String, !creationDate.isEmpty {
+            let dateItem = AVMutableMetadataItem()
+            dateItem.keySpace = AVMetadataKeySpace.quickTimeUserData
+            dateItem.key = "©day" as NSString
+            dateItem.value = creationDate as NSString
+            dateItem.dataType = kCMMetadataBaseDataType_UTF8 as String
+            items.append(dateItem)
+        }
+
+        // --- Device make: QuickTime ©mak ---
+        if let make = options["deviceMake"] as? String, !make.isEmpty {
+            let makeItem = AVMutableMetadataItem()
+            makeItem.keySpace = AVMetadataKeySpace.quickTimeUserData
+            makeItem.key = "©mak" as NSString
+            makeItem.value = make as NSString
+            makeItem.dataType = kCMMetadataBaseDataType_UTF8 as String
+            items.append(makeItem)
+        }
+
+        // --- Device model: QuickTime ©mod ---
+        if let model = options["deviceModel"] as? String, !model.isEmpty {
+            let modelItem = AVMutableMetadataItem()
+            modelItem.keySpace = AVMetadataKeySpace.quickTimeUserData
+            modelItem.key = "©mod" as NSString
+            modelItem.value = model as NSString
+            modelItem.dataType = kCMMetadataBaseDataType_UTF8 as String
+            items.append(modelItem)
+        }
+
+        return items
+    }
 }
+

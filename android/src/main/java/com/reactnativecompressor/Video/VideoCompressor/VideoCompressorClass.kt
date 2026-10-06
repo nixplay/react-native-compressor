@@ -24,8 +24,17 @@ class VideoCompressorClass(private val context: ReactApplicationContext) {
     outputWidth: Int,
     outputHeight: Int,
     bitrate: Int,
-    startTime: Long = 0L, // New parameter for start time in milliseconds
-    endTime: Long = -1L, // New parameter for end time in milliseconds (-1 means end of video)
+    startTime: Long = 0L,
+    endTime: Long = -1L,
+    // Mandatory metadata — extracted from original asset before transcoding
+    gpsLatitude: Double? = null,
+    gpsLongitude: Double? = null,
+    gpsAltitude: Double? = null,
+    gpsLatitudeRef: String? = null,
+    gpsLongitudeRef: String? = null,
+    deviceMake: String? = null,
+    deviceModel: String? = null,
+    creationDate: String? = null,
     listener: CompressionListener,
   ) {
     val uris = mutableListOf<Uri>()
@@ -40,6 +49,14 @@ class VideoCompressorClass(private val context: ReactApplicationContext) {
       bitrate,
       startTime,
       endTime,
+      gpsLatitude,
+      gpsLongitude,
+      gpsAltitude,
+      gpsLatitudeRef,
+      gpsLongitudeRef,
+      deviceMake,
+      deviceModel,
+      creationDate,
       listener,
       destPath
     )
@@ -56,8 +73,16 @@ class VideoCompressorClass(private val context: ReactApplicationContext) {
     outputWidth: Int,
     outputHeight: Int,
     bitrate: Int,
-    startTime: Long = 0L, // New parameter for start time in milliseconds
-    endTime: Long = -1L, // New parameter for end time in milliseconds (-1 means end of video)
+    startTime: Long = 0L,
+    endTime: Long = -1L,
+    gpsLatitude: Double? = null,
+    gpsLongitude: Double? = null,
+    gpsAltitude: Double? = null,
+    gpsLatitudeRef: String? = null,
+    gpsLongitudeRef: String? = null,
+    deviceMake: String? = null,
+    deviceModel: String? = null,
+    creationDate: String? = null,
     listener: CompressionListener,
     destPath: String
   ) {
@@ -82,6 +107,14 @@ class VideoCompressorClass(private val context: ReactApplicationContext) {
             bitrate,
             startTime,
             endTime,
+            gpsLatitude,
+            gpsLongitude,
+            gpsAltitude,
+            gpsLatitudeRef,
+            gpsLongitudeRef,
+            deviceMake,
+            deviceModel,
+            creationDate,
             listener,
           )
 
@@ -104,8 +137,16 @@ class VideoCompressorClass(private val context: ReactApplicationContext) {
     outputWidth: Int,
     outputHeight: Int,
     bitrate: Int,
-    startTime: Long = 0L, // New parameter for start time in milliseconds
-    endTime: Long = -1L, // New parameter for end time in milliseconds (-1 means end of video)
+    startTime: Long = 0L,
+    endTime: Long = -1L,
+    gpsLatitude: Double? = null,
+    gpsLongitude: Double? = null,
+    gpsAltitude: Double? = null,
+    gpsLatitudeRef: String? = null,
+    gpsLongitudeRef: String? = null,
+    deviceMake: String? = null,
+    deviceModel: String? = null,
+    creationDate: String? = null,
     listener: CompressionListener,
   ): Result = withContext(Dispatchers.Default) {
     return@withContext compressVideo(
@@ -119,6 +160,14 @@ class VideoCompressorClass(private val context: ReactApplicationContext) {
       bitrate,
       startTime,
       endTime,
+      gpsLatitude,
+      gpsLongitude,
+      gpsAltitude,
+      gpsLatitudeRef,
+      gpsLongitudeRef,
+      deviceMake,
+      deviceModel,
+      creationDate,
       object : CompressionProgressListener {
         override fun onProgressChanged(index: Int, percent: Float) {
           listener.onProgress(index, percent)

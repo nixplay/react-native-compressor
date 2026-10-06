@@ -9,7 +9,11 @@ import com.reactnativecompressor.Utils.Utils.generateCacheFilePath
 import java.io.File
 
 object AutoVideoCompression {
-    fun createCompressionSettings(fileUrl: String?, options: VideoCompressorHelper, promise: Promise, reactContext: ReactApplicationContext?) {
+    fun createCompressionSettings(fileUrl: String?, options: VideoCompressorHelper, promise: Promise, reactContext: ReactApplicationContext?,
+      gpsLatitude: Double? = null, gpsLongitude: Double? = null, gpsAltitude: Double? = null,
+      gpsLatitudeRef: String? = null, gpsLongitudeRef: String? = null,
+      deviceMake: String? = null, deviceModel: String? = null, creationDate: String? = null
+    ) {
         val maxSize = options.maxSize
         val minimumFileSizeForCompress = options.minimumFileSizeForCompress
         try {
@@ -62,7 +66,9 @@ object AutoVideoCompression {
                     ).toFloat()
                 }
 
-                compressVideo(srcPath!!, destinationPath, resultWidth, resultHeight, videoBitRate, options.uuid!!,options.progressDivider!!, options.startTime, options.endTime, promise, reactContext)
+                compressVideo(srcPath!!, destinationPath, resultWidth, resultHeight, videoBitRate, options.uuid!!, options.progressDivider!!, options.startTime, options.endTime,
+                  gpsLatitude, gpsLongitude, gpsAltitude, gpsLatitudeRef, gpsLongitudeRef,
+                  deviceMake, deviceModel, creationDate, promise, reactContext)
             } else {
                 promise.resolve(fileUrl)
             }
