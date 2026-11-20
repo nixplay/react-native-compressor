@@ -611,26 +611,43 @@ object Compressor {
         return codec
     }
 
-  // Function to prepare the video decoder
+  // Function to prepare the video decoder with fallback
     private fun prepareDecoder(
         inputFormat: MediaFormat,
         outputSurface: OutputSurface,
     ): MediaCodec {
-        // This seems to cause an issue with certain phones
-        // val decoderName =
-        //    MediaCodecList(REGULAR_CODECS).findDecoderForFormat(inputFormat)
-        // val decoder = MediaCodec.createByCodecName(decoderName)
-        // Log.i("decoderName", decoder.name)
+        val mime = inputFormat.getString(MediaFormat.KEY_MIME) ?: "video/avc"
 
-        // val decoder = if (hasQTI) {
-        // MediaCodec.createByCodecName("c2.android.avc.decoder")
-        //} else {
+        // Priority order for decoders, especially for Snapdragon 8 Gen 3 (S24 Ultra) HEVC
+        val preferredDecoders = when (mime) {
+            "video/hevc" -> listOf(
+                "c2.qti.hevc.decoder",       // Qualcomm hardware HEVC decoder
+                "c2.android.hevc.decoder",   // AOSP hardware/software HEVC decoder
+                "OMX.google.hevc.decoder"    // Google software HEVC fallback
+            )
+            "video/avc" -> listOf(
+                "c2.qti.avc.decoder",        // Qualcomm hardware AVC decoder
+                "c2.android.avc.decoder",    // AOSP hardware AVC decoder
+                "OMX.google.h264.decoder"    // Google software AVC fallback
+            )
+            else -> emptyList()
+        }
 
-        val decoder = MediaCodec.createDecoderByType(inputFormat.getString(MediaFormat.KEY_MIME)!!)
-        //}
+        for (name in preferredDecoders) {
+            try {
+                val codec = MediaCodec.createByCodecName(name)
+                codec.configure(inputFormat, outputSurface.getSurface(), null, 0)
+                Log.i("DecoderSelect", "Using decoder: $name for $mime")
+                return codec
+            } catch (e: Exception) {
+                Log.w("DecoderSelect", "Failed with $name for $mime, trying next. Error: ${e.message}")
+            }
+        }
 
+        // Fallback: let Android select the default decoder for this MIME type
+        val decoder = MediaCodec.createDecoderByType(mime)
         decoder.configure(inputFormat, outputSurface.getSurface(), null, 0)
-
+        Log.i("DecoderSelect", "Using system default decoder for $mime")
         return decoder
     }
 

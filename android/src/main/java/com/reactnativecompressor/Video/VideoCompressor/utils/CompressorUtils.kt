@@ -128,9 +128,13 @@ object CompressorUtils {
       alignedWidth -= alignedWidth % videoCaps.widthAlignment
     }
 
-    val clampedFps = rawFps.coerceIn(
-      videoCaps.supportedFrameRates.lower.toInt(),
-      videoCaps.supportedFrameRates.upper.toInt()
+    // --- Frame rate (cap output to 30fps for compatibility, especially with 60/120fps high-end recordings) ---
+    val clampedFps = minOf(
+      30,
+      rawFps.coerceIn(
+        videoCaps.supportedFrameRates.lower.toInt(),
+        videoCaps.supportedFrameRates.upper.toInt()
+      )
     )
     val clampedBitrate = rawBitrate.coerceIn(
       videoCaps.bitrateRange.lower,
@@ -150,15 +154,31 @@ object CompressorUtils {
       MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
     )
 
-    // --- Propagate color info if present ---
-    getColorStandard(inputFormat)?.let {
-      outputFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, it)
-    }
-    getColorTransfer(inputFormat)?.let {
-      outputFormat.setInteger(MediaFormat.KEY_COLOR_TRANSFER, it)
-    }
-    getColorRange(inputFormat)?.let {
-      outputFormat.setInteger(MediaFormat.KEY_COLOR_RANGE, it)
+    // --- Color format handling: Tone-map / normalize HDR to standard 8-bit SDR ---
+    // High-end devices like Samsung S24 Ultra record in HDR10+ / BT.2020.
+    // Propagating BT.2020 / ST2084 / HLG to an 8-bit H.264/AVC encoder causes MediaCodec
+    // configuration failures or corrupted green/black output frames.
+    val inputColorStandard = getColorStandard(inputFormat)
+    val inputColorTransfer = getColorTransfer(inputFormat)
+    val isHdrInput = (inputColorStandard == MediaFormat.COLOR_STANDARD_BT2020) ||
+      (inputColorTransfer == MediaFormat.COLOR_TRANSFER_ST2084) ||
+      (inputColorTransfer == MediaFormat.COLOR_TRANSFER_HLG)
+
+    if (mime == "video/avc" && isHdrInput) {
+      Log.i("EncoderSelect", "HDR input detected on S24/newer device; mapping color profile to standard SDR BT.709 for H.264 compatibility")
+      outputFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
+      outputFormat.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
+      outputFormat.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
+    } else {
+      inputColorStandard?.let {
+        outputFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, it)
+      }
+      inputColorTransfer?.let {
+        outputFormat.setInteger(MediaFormat.KEY_COLOR_TRANSFER, it)
+      }
+      getColorRange(inputFormat)?.let {
+        outputFormat.setInteger(MediaFormat.KEY_COLOR_RANGE, it)
+      }
     }
 
     Log.i(
