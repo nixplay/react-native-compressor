@@ -235,6 +235,7 @@ object Compressor {
           var outputDone = false
 
           var videoTrackIndex = -5
+          var lastProgressPresentationTimeUs = -500_000L
 
           inputSurface = InputSurface(encoder.createInputSurface())
           inputSurface.makeCurrent()
@@ -409,10 +410,13 @@ object Compressor {
 
                                             inputSurface.setPresentationTime(bufferInfo.presentationTimeUs * 1000)
 
-                                            compressionProgressListener.onProgressChanged(
-                                                id,
-                                                bufferInfo.presentationTimeUs.toFloat() / duration.toFloat() * 100
-                                            )
+                                            if (bufferInfo.presentationTimeUs - lastProgressPresentationTimeUs >= 500_000L) {
+                                                lastProgressPresentationTimeUs = bufferInfo.presentationTimeUs
+                                                compressionProgressListener.onProgressChanged(
+                                                    id,
+                                                    bufferInfo.presentationTimeUs.toFloat() / duration.toFloat() * 100
+                                                )
+                                            }
 
                                             inputSurface.swapBuffers()
                                         }
